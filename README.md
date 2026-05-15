@@ -3,7 +3,7 @@
 > Self-hosted observability + security platform with a native MCP interface
 > for LLM agents.
 
-**Status:** 🚧 Pre-alpha (M0 — scaffolding). Repos are private until v0.1.0.
+**Status:** 🚧 Pre-alpha — M1.3 in progress (CA, enrollment, token CLI, Connect stream handler).
 
 ## What is it
 
@@ -70,7 +70,7 @@ Realistic timeline: **Q3 2026** for v0.1, **Q1 2027** for v1.0.
 
 ## License
 
-🚧 To be decided before public release. See [ADR-006](./docs/adr/006-license.md).
+Licensed under the [Apache License 2.0](./LICENSE).
 
 ## Author
 

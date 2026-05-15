@@ -1,178 +1,167 @@
 # Praetor — Architecture
 
-> Detailní pohled na komponenty a jak spolu mluví. PROJECT.md je 30k stop;
-> tohle je 5k stop.
+> Component-level view of the system and how the pieces communicate.
+> For the full project brief, see [PROJECT.md](./PROJECT.md).
 
-## Komponenty a jejich odpovědnosti
+## Components and responsibilities
 
 ### praetor-agent
 
-- **Cíl:** být co nejmenší a co nejtišší. ~15 MB binárka, žádné runtime deps.
-- **Co dělá:**
-  - Po instalaci: enrollment (token → CSR → cert) → uloží identitu do `/var/lib/praetor/`
-  - Drží jeden persistentní gRPC stream do control plane
-  - Sbírá: metriky (CPU/RAM/disk/net/proc), logy (journald, allowlistované soubory), security eventy (auth.log, listening porty, sudo, user changes)
-  - Vykonává Tier 0/1 commandy (s lokálním validátorem); Tier 2/3 odmítá pokud nejsou explicitně povoleny v ExecutionPolicy
-- **Co nedělá:**
-  - Nemá žádný listening port
-  - Nezapisuje telemetrii na disk (jen identitu) — je stateless beyond identity
-  - Nikdy nespouští shell s metaznaky (žádné `bash -c`, žádné pipes)
+- **Goal:** stay as small and quiet as possible. ~15 MB static binary, no runtime dependencies.
+- **What it does:**
+  - On first start: enrollment (token → CSR → cert) → stores identity in `/var/lib/praetor/`
+  - Maintains a single persistent gRPC stream to the control plane
+  - Collects: metrics (CPU/RAM/disk/net/processes), logs (journald, allowlisted files), security events (auth.log, listening ports, sudo, user changes)
+  - Executes Tier 0/1 commands (with a local validator); refuses Tier 2/3 unless explicitly enabled in `ExecutionPolicy`
+- **What it does NOT do:**
+  - No listening ports — all connections are outbound
+  - No telemetry written to disk (only identity state) — stateless beyond the cert
+  - Never spawns a shell with metacharacters (`bash -c`, pipes, redirects)
 
 ### praetor-server (control plane)
 
-- **Cíl:** přijímá agenty, ukládá data, dělá business logic, vystavuje REST.
-- **Procesy/služby uvnitř:**
-  - **Agent ingress** — gRPC :8443, mTLS, accept loop, per-agent goroutina
-  - **Storage routers** — heartbeat → Postgres, metrics → VM, logs → Loki, security events → Postgres
-  - **Anomaly detector** — cron, čte z VM, píše candidates do Postgresu
-  - **LLM triage worker** — vyzvedává candidates, obohacuje, volá Anthropic API
-  - **Command broker** — fronta commandů per agent, odesílá přes existující stream
-  - **REST API :8080** — pro MCP server a UI
-- **Externí závislosti:**
-  - Postgres (state, audit, queue, alerts)
+- **Goal:** accept agents, store data, apply business logic, expose a REST API.
+- **Internal services:**
+  - **Agent ingress** — gRPC :8443, mTLS, accept loop, per-agent goroutine
+  - **Storage routers** — heartbeat → Postgres, metrics → VictoriaMetrics, logs → Loki, security events → Postgres
+  - **Anomaly detector** — cron job, reads from VictoriaMetrics, writes candidates to Postgres
+  - **LLM triage worker** — picks up candidates, enriches context, calls Anthropic API (or a local Qwen3-compatible endpoint)
+  - **Command broker** — per-agent command queue, delivers over the existing stream
+  - **REST API :8080** — consumed by the MCP server and any future UI
+- **External dependencies:**
+  - Postgres (state, audit log, queue, alerts)
   - VictoriaMetrics (TSDB)
-  - Loki (logs)
-  - Anthropic API (LLM triage) — nebo lokální Qwen3 přes OpenAI-compat endpoint
+  - Loki (log storage)
+  - Anthropic API or a local OpenAI-compatible LLM (triage worker only, planned for M4)
 
 ### praetor-mcp
 
-- **Cíl:** tenká fasáda. MCP nástroje 1:1 mapují REST endpointy.
-- Žádná business logic. Žádný stav. Restartovatelná kdykoliv.
-- Důvod proč to existuje: MCP klienti chtějí MCP rozhraní, REST API server
-  potřebuje pro UI a integrace. Oddělení = MCP může být psané v TS
-  (ekosystém SDK je tam nejlepší), server jede v Go.
+- **Goal:** thin facade. MCP tools map 1:1 to REST endpoints.
+- No business logic. No state. Restartable at any time.
+- Written in TypeScript because the MCP SDK ecosystem is best there; the control plane stays in Go for performance and deployment simplicity.
 
 ### praetor-install
 
-- **Cíl:** jeden curl příkaz, který funguje na Debian/Ubuntu/RHEL.
-- Stáhne binárku, vytvoří uživatele, položí systemd unit, spustí enrollment.
-- Verifikuje cosign podpis binárky před instalací.
+- **Goal:** one `curl | bash` command that works on Debian/Ubuntu/RHEL.
+- Downloads the binary, creates the system user, writes the systemd unit, triggers enrollment.
+- Verifies the binary checksum (cosign keyless signature planned for a later milestone).
 
-## Síťový model
+## Network model
 
 ```
-Agent (cokoliv za NATem)
+Agent (anything behind NAT)
   │
   │ outbound TCP 8443, mTLS
   ▼
-Control plane (veřejně přístupný endpoint)
+Control plane (publicly reachable endpoint)
   │
-  ├── Postgres (interní síť)
-  ├── VictoriaMetrics (interní síť)
-  └── Loki (interní síť)
+  ├── Postgres (internal network)
+  ├── VictoriaMetrics (internal network)
+  └── Loki (internal network)
 
-LLM klient (Claude Desktop u uživatele)
+LLM client (Claude Desktop on the user's machine)
   │
-  │ MCP (HTTP/SSE)
+  │ MCP (HTTP/SSE or stdio)
   ▼
-praetor-mcp (běží lokálně u uživatele NEBO vedle serveru)
+praetor-mcp (runs locally or alongside the server)
   │
-  │ HTTP (s API tokenem)
+  │ HTTP + bearer token
   ▼
 Control plane REST :8080
 ```
 
-**Důležité:** žádná komponenta neotevírá inbound port směrem k agentovi.
-Vše jde od agenta nahoru.
+**Key invariant:** no component opens an inbound connection toward the agent.
+Everything flows agent → server.
 
-## Identita a důvěra
+## Identity and trust
 
 ```
 ┌─────────────────────────────┐
-│ Praetor Root CA             │  (offline klíč, generovaný při instalaci serveru)
+│ Praetor Root CA             │  (offline key, generated at server install time)
 └─────────┬───────────────────┘
-          │ vystavuje
+          │ issues
           ▼
 ┌─────────────────────────────┐
-│ Server cert (long-lived)    │  (rok+, rotace plánovaná)
+│ Server cert (long-lived)    │  (1 year+, rotation planned)
 └─────────────────────────────┘
-          │ vystavuje
+          │ issues
           ▼
 ┌─────────────────────────────┐
-│ Agent client certs (24h)    │  (auto-rotace přes Enroll RPC)
+│ Agent client certs (24 h)   │  (auto-rotated via Enroll RPC)
 └─────────────────────────────┘
 ```
 
 **Enrollment flow:**
 
-1. Operátor vyrobí enrollment token na serveru (CLI nebo UI). Token je
-   Ed25519-signed JWT-like struktura: `{agent_label, exp, nonce}`. TTL 15 min.
-2. Operátor vloží token do install commandu jako `WATCHTOWER_TOKEN=...`
-3. Agent při bootstrapu vygeneruje keypair, vyrobí CSR
-4. Agent zavolá `Enroll(token, csr_pem, host_info)` — neauth gRPC volání
-5. Server ověří podpis tokenu, exp, nonce (single-use), vystaví client cert
-6. Agent uloží `cert.pem`, `key.pem`, `agent_id` do `/var/lib/praetor/`
-7. Agent zavolá `Connect()` (mTLS) — bidirectional stream
-8. Každých ~20 hodin agent znovu zavolá `Enroll()` s tím samým flow ale
-   autentizovaný současným cert (rotace)
+1. Operator issues an enrollment token on the server (CLI or UI). The token is an Ed25519-signed structure: `{agent_label, exp, nonce}`. TTL: 15 minutes.
+2. Operator passes the token to the install command as `PRAETOR_TOKEN=...`.
+3. The agent generates a keypair and a CSR.
+4. The agent calls `Enroll(token, csr_pem, host_info)` — an unauthenticated gRPC call.
+5. The server verifies the token signature, expiry, and nonce (single-use), then issues a client certificate.
+6. The agent writes `cert.pem`, `key.pem`, and `agent_id` to `/var/lib/praetor/`.
+7. The agent calls `Connect()` over mTLS — bidirectional stream begins.
+8. Every ~20 hours the agent re-calls `Enroll()` using the same flow but authenticated with its current cert (certificate rotation).
 
-## Datový tok
+## Data flow
 
-### Metriky
+### Metrics
 
 ```
-agent.collector → in-memory ring buffer
-                → flush every 15s
-                → MetricBatch over gRPC stream
-                → server ingestor
-                → VictoriaMetrics (write API)
+agent collector → in-memory ring buffer
+               → flush every 15 s
+               → MetricBatch over gRPC stream
+               → server ingestor
+               → VictoriaMetrics (write API)
 ```
 
-### Logy
+### Logs
 
 ```
 journald reader → parse → filter (severity ≥ warning)
-                → batch (1s nebo 100 entries)
-                → LogBatch over gRPC stream
-                → server ingestor
-                → Loki (push API)
+               → batch (1 s or 100 entries, whichever comes first)
+               → LogBatch over gRPC stream
+               → server ingestor
+               → Loki (push API)
 ```
 
-### Security eventy
+### Security events
 
 ```
 auth.log tail → parse → SecurityEvent
-              → immediate send (no batching, low volume)
-              → server ingestor
-              → Postgres (security_events table)
-              → trigger: alert engine eval
+             → send immediately (no batching — low volume, high urgency)
+             → server ingestor
+             → Postgres (security_events table)
+             → trigger: alert engine evaluation
 ```
 
-### Commandy (server → agent)
+### Commands (server → agent)
 
 ```
 LLM/user → REST POST /v1/commands {host, type, params, reason}
          → server validates against host's ExecutionPolicy
          → command_queue (Postgres)
          → command broker picks up
-         → finds active stream for host
-         → CommandRequest down the stream
+         → finds active stream for the target host
+         → CommandRequest sent down the stream
          → agent validator (second layer of defense)
          → agent executor
-         → CommandResult up the stream
-         → server stores in command_audit
-         → REST GET /v1/commands/:id returns result
+         → CommandResult sent up the stream
+         → server stores result in command_audit
+         → REST GET /v1/commands/:id returns the result
 ```
 
-## Observability sebe sama
+## Self-observability
 
-Praetor musí monitorovat sám sebe — jinak budeme mít "monitoring monitoringu"
-problém. Cíl pro v0.1:
+Praetor must monitor itself — otherwise we'd have a "monitoring the monitor" problem. Goals for v0.1:
 
-- Server exportuje vlastní metriky na `/metrics` (Prometheus format),
-  scrapable VM
-- Agent exportuje *do svého vlastního streamu* metriky o sobě (počet
-  buffered metrics, dropped events, gRPC reconnects, command queue depth)
-- Strukturované logy (slog JSON) ze všech komponent
+- Server exports its own metrics on `/metrics` (Prometheus format), scrapable by VictoriaMetrics.
+- Agent sends *its own* operational metrics over the stream (buffered metric count, dropped events, gRPC reconnects, command queue depth).
+- Structured JSON logs (Go `slog`) from all components.
 
-## Co schválně NEděláme v rané fázi
+## Deliberate non-goals (early milestones)
 
-- **eBPF.** Mocné, ale zvyšuje footprint a komplexitu. Možná v v1.x.
-- **Auto-discovery hostů.** Operátor explicitně instaluje agent. Žádný
-  scan sítě.
-- **Web UI v server repu.** REST API je dost. UI buď samostatný projekt
-  později, nebo se použije Grafana.
-- **Pluginy.** Pevně daný set kolektorů v binárce. Pluginy → ekosystém →
-  bezpečnostní noční můra.
-- **Distributed control plane.** Single-node Postgres + VM + Loki + server.
-  Vertical scale je 100% OK pro 500 hostů.
+- **eBPF.** Powerful, but increases footprint and complexity. Possible in v1.x.
+- **Auto-discovery.** Operators install the agent explicitly. No network scanning.
+- **Web UI in the server repo.** The REST API is sufficient. A UI is a separate project later, or Grafana suffices.
+- **Plugins.** Fixed set of collectors baked into the binary. Plugins → ecosystem → security nightmare.
+- **Distributed control plane.** Single-node Postgres + VictoriaMetrics + Loki + server. Vertical scaling handles 500+ hosts comfortably.
