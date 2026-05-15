@@ -22,4 +22,6 @@ We aim to respond within 72 hours and will coordinate disclosure after a fix is 
 
 ## Security considerations
 
-Praetor runs as an unprivileged system user (`praetor`) and communicates over mTLS. The agent binary is signed with [cosign keyless](https://docs.sigstore.dev/). SBOM is attached to each release.
+Praetor runs as an unprivileged system user (`praetor`) and communicates over mTLS.
+
+Binary signing (cosign keyless) and SBOM generation are planned for the M6 release.

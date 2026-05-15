@@ -1,127 +1,165 @@
 # Praetor — Roadmap
 
-> Realistický timeline pro part-time tempo (vedle školy + práce):
-> **2–3 měsíce do v0.1.0**.
+> Realistic timeline for a part-time pace (alongside university and work).
 
-## M0 — Scaffolding (1–2 dny)
+## Status
 
-**Cíl:** všechna repa existují, jsou nastavená, prázdné runy v CI procházejí.
-
-- [ ] Repo `praetor` (umbrella) — public-facing PROJECT.md, README, LICENSE placeholder
-- [ ] Repo `praetor-proto` — `buf.yaml`, `buf.gen.yaml`, prázdný `praetor/v1/` adresář, CI: `buf lint` + `buf breaking`
-- [ ] Repo `praetor-agent` — Go module, cmd/internal layout, Makefile, prázdný main, CI: build + test + lint
-- [ ] Repo `praetor-server` — totéž
-- [ ] Repo `praetor-mcp` — pnpm + tsconfig + eslint + prettier, prázdný entry, CI: typecheck + lint
-- [ ] Repo `praetor-install` — install.sh kostra, shellcheck v CI
-- [ ] V `praetor` repu: ARCHITECTURE.md (zrcadlo z vaultu), CONTRIBUTING.md placeholder, ADR index
-- [ ] CLAUDE.md v `praetor` repu (instrukce pro Claude Code)
-
-**Hotovo když:**
-- `git push` na každé repo zelený CI
-- `gh repo list ondrejsindelka --limit 20` ukazuje všech 6 repů
-
-## M1 — Walking skeleton (1–2 týdny)
-
-**Cíl:** end-to-end demo. Spustím install na 3 hosty, vidím je v API.
-
-- [ ] **Spec:** [SPEC-001](./docs/specs/001-enrollment-flow.md)
-- [ ] **proto:** definice `Enroll`, `Connect`, `Heartbeat`, `HostInfo`, základní `Metric`
-- [ ] **server:** Postgres migrace (`hosts`, `agent_identities`, `enrollment_tokens`)
-- [ ] **server:** `Enroll` RPC handler (token verify, CSR signing)
-- [ ] **server:** `Connect` stream handler — přijímá heartbeats, ukládá do Postgresu
-- [ ] **server:** REST `GET /v1/hosts`, `GET /v1/hosts/:id`
-- [ ] **server:** CLI subkomanda `praetor-server token issue --label foo`
-- [ ] **agent:** identity loader, enrollment caller
-- [ ] **agent:** stream client s reconnect/backoff
-- [ ] **agent:** heartbeat loop (každých 30s)
-- [ ] **agent:** první 4 metriky (cpu_pct, mem_used_pct, disk_used_pct per mount, net_bytes per iface)
-- [ ] **install:** kompletní script — download → user → systemd → enroll
-- [ ] Demo: install na 3 LXC kontejnerů v homelabu, `curl /v1/hosts` ukáže všechny
-
-## M2 — Observability backbone (1–2 týdny)
-
-- [ ] **Spec:** [SPEC-002](./docs/specs/002-grpc-stream-lifecycle.md) (config push, reconnect, backpressure)
-- [ ] **proto:** `LogBatch`, `LogEntry`, `ConfigUpdate`, `AgentConfig`, `ConfigAck`
-- [ ] **server:** VictoriaMetrics integrace — write přes vmagent nebo přímo
-- [ ] **server:** Loki integrace
-- [ ] **server:** config push — operátor mění config v DB, server pushne přes stream
-- [ ] **agent:** journald reader (přes `sd_journal` cgo, nebo `journalctl --output=json --follow`)
-- [ ] **agent:** přijímá `ConfigUpdate`, aplikuje za běhu
-- [ ] Grafana dashboard: "Fleet overview" (počet hostů, celkový CPU/RAM, top heavy hosts)
-- [ ] Grafana dashboard: "Host detail" (CPU/RAM/disk/net + journal logs)
-
-## M3 — MCP layer (1 týden)
-
-- [ ] **Spec:** [SPEC-003](./docs/specs/003-mcp-tools.md)
-- [ ] **mcp:** `@modelcontextprotocol/sdk` setup, HTTP server
-- [ ] **mcp:** MCP tools:
-  - `list_hosts(filters?)` — seznam s metadaty + status
-  - `get_host(host_id)` — detail
-  - `get_metrics(host_id, metric, range, step?)` — dotaz na VM
-  - `search_logs(host_id?, query, range, limit?)` — LogQL přes Loki
-  - `get_recent_security_events(host_id?, since?, severity?)` — z Postgresu
-- [ ] Auth — bearer token, MCP server pošle do REST API
-- [ ] Test s Claude Desktop: "Co se děje na hostu prod-db-01?"
-- [ ] Doc: jak nakonfigurovat Claude Desktop (claude_desktop_config.json)
-
-## M4 — Anomaly + LLM triage (2 týdny)
-
-- [ ] **proto:** `CommandRequest`, `CommandResult`, `DiagnosticCommand`, `CommandTier`, `ExecutionPolicy`
-- [ ] **server:** classical anomaly detector — cron, EWMA + threshold rules
-- [ ] **server:** alert storage (`alerts`, `alert_candidates` tabulky)
-- [ ] **server:** triage worker — vyzvedne candidate, build context bundle, call LLM, store result
-- [ ] **server:** Discord webhook notifier
-- [ ] **agent:** Tier 0 diagnostic checks:
-  - `disk_usage` — `df -h` ekvivalent přes gopsutil
-  - `top_processes` — top 10 by CPU/RAM
-  - `recent_auth_events` — posledních 50 řádek auth.log
-  - `journalctl_for_unit` — `journalctl -u X --since=...`
-  - `read_config_file` — read s allowlist (`/etc/nginx/*`, `/etc/systemd/*`, ...)
-- [ ] **agent:** Tier 1 shell executor — strict allowlist (`ss`, `journalctl`, `cat` na allowlist paths), validátor proti metaznakům
-- [ ] **server:** REST `POST /v1/commands`, `GET /v1/commands/:id`
-- [ ] **mcp:** nástroj `run_diagnostic(host, check, params)`
-- [ ] **mcp:** nástroj `run_shell(host, binary, args, reason)` (jen Tier 1)
-
-## M5 — Security collectors (2 týdny)
-
-- [ ] **agent:** auth.log tail/parse — SSH login (success), SSH failed auth
-- [ ] **agent:** sudo events parser
-- [ ] **agent:** listening port watcher — diff vs baseline
-- [ ] **agent:** /etc/passwd integrita
-- [ ] **agent:** process anomaly (nový proces běžící z neobvyklého místa)
-- [ ] **server:** rule engine pro security alerts (např. ">5 failed auths in 1min from same IP")
-- [ ] **mcp:** `get_security_events` rozšířený
-
-## M6 — Polish + opensource launch (1–2 týdny)
-
-- [ ] Licence vybraná a aplikovaná na všechna repa ([ADR-006](./docs/adr/006-licence.md))
-- [ ] CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md ve všech repech
-- [ ] Reproducible builds (Go: `-trimpath`, `-buildvcs=true`)
-- [ ] cosign keyless signing v release CI
-- [ ] SBOM v každém releasu (cyclonedx)
-- [ ] `praetor.dev` landing page (Astro)
-- [ ] Demo video (asciinema + voiceover, max 3 min)
-- [ ] README badges, screenshots
-- [ ] Show HN draft post
-- [ ] r/selfhosted draft post
-- [ ] **Repos public switch**
-
-## Po v0.1 — backlog
-
-- Multi-tenancy (org_id všude)
-- Container introspection (docker, podman, k8s)
-- eBPF collectors
-- File integrity monitoring (FIM)
-- Web UI (samostatný `praetor-ui` repo)
-- Tier 2/3 commandy s human-in-the-loop schvalováním
-- Vlastní agentní runtime (LLM agent v praetor-server, který volá MCP nástroje sám)
-- Helm chart + Docker Compose pro server
-- packagecloud.io / homebrew tap
+| Milestone | Status | Description |
+|-----------|--------|-------------|
+| M0 | ✅ Done | Scaffolding — all repos, CI green |
+| M1.1 | ✅ Done | Proto v0.1.0 — Metric / MetricBatch / MetricType |
+| M1.2 | ✅ Done | Server Postgres schema + goose migrations + docker-compose |
+| M1.3 | 🚧 In progress | CA + Enroll RPC + token CLI + Connect stream + heartbeat persistence |
+| M1.4 | ⏭ Next | Agent enrollment + stream client + first metrics end-to-end |
+| M1.5 | ⏭ Planned | Install script — real binary download + enrollment trigger |
+| M2 | ⏭ Planned | Observability backbone — VictoriaMetrics + Loki + Grafana dashboards |
+| M3 | ⏭ Planned | MCP layer — full tool set for Claude Desktop / Claude Code |
+| M4 | ⏭ Planned | Anomaly detection + LLM triage + safe Tier-1 commands |
+| M5 | ⏭ Planned | Security collectors |
+| M6 | ⏭ Planned | Polish + open-source launch |
 
 ---
 
-## Princip
+## M0 — Scaffolding ✅
 
-**Každý milník končí demem nebo screenshotem v daily note.** Bez toho je
-to jen plán. M0 demo: `gh repo list`. M1 demo: `curl /v1/hosts`. M2 demo:
-Grafana screenshot. M3 demo: konverzace s Claude Desktop. Atd.
+**Goal:** all repos exist, are configured, and CI passes on empty runs.
+
+- [x] Repo `praetor` (umbrella) — public-facing README, ARCHITECTURE, LICENSE placeholder
+- [x] Repo `praetor-proto` — `buf.yaml`, `buf.gen.yaml`, `praetor/v1/` layout, CI: `buf lint` + `buf breaking`
+- [x] Repo `praetor-agent` — Go module, cmd/internal layout, Makefile, CI: build + test + lint
+- [x] Repo `praetor-server` — same as agent
+- [x] Repo `praetor-mcp` — pnpm + tsconfig + eslint + prettier, CI: typecheck + lint
+- [x] Repo `praetor-install` — install.sh skeleton, shellcheck in CI
+
+**Done when:** `gh repo list ondrejsindelka --limit 20` shows all 6 repos with green CI.
+
+## M1 — Walking skeleton 🚧
+
+**Goal:** end-to-end demo. Install on 3 hosts, see them in the API.
+
+**Spec:** [SPEC-001 — Enrollment flow](./docs/specs/001-enrollment-flow.md)
+
+### M1.1 ✅ — Proto v0.1.0
+- [x] `Enroll`, `Connect`, `Heartbeat`, `HostInfo`, `Metric`, `MetricBatch`, `MetricType`
+
+### M1.2 ✅ — Server data layer
+- [x] Postgres migrations: `hosts`, `agent_identities`, `enrollment_tokens`
+- [x] docker-compose dev stack (Postgres, VictoriaMetrics, Loki, Grafana)
+- [x] goose migration runner wired into the binary
+
+### M1.3 🚧 — Auth + streams
+- [ ] Internal CA: root CA + server cert generated at first start
+- [ ] `Enroll` RPC handler: token verify → CSR sign → client cert issued
+- [ ] `token issue` / `token list` / `token revoke` CLI subcommands
+- [ ] `Connect` stream handler: receives heartbeats, persists to Postgres
+
+### M1.4 ⏭ — Agent end-to-end
+- [ ] Agent: identity loader, enrollment caller
+- [ ] Agent: stream client with reconnect/backoff
+- [ ] Agent: heartbeat loop (every 30 s)
+- [ ] Agent: first 4 metrics — `cpu_pct`, `mem_used_pct`, `disk_used_pct` (per mount), `net_bytes` (per interface)
+- [ ] Server: REST `GET /v1/hosts`, `GET /v1/hosts/:id`
+
+### M1.5 ⏭ — Install script
+- [ ] Full script: download → SHA256 verify → user → systemd → enroll
+- [ ] Demo: install on 3 LXC containers in homelab, `curl /v1/hosts` shows all three
+
+---
+
+## M2 — Observability backbone ⏭
+
+**Spec:** [SPEC-002 — gRPC stream lifecycle](./docs/specs/002-grpc-stream-lifecycle.md)
+
+- [ ] **proto:** `LogBatch`, `LogEntry`, `ConfigUpdate`, `AgentConfig`, `ConfigAck`
+- [ ] **server:** VictoriaMetrics integration — metrics write via vmagent or directly
+- [ ] **server:** Loki integration
+- [ ] **server:** config push — operator changes config in DB, server pushes update over stream
+- [ ] **agent:** journald reader (`sd_journal` via cgo, or `journalctl --output=json --follow`)
+- [ ] **agent:** receives `ConfigUpdate`, applies at runtime without restart
+- [ ] Grafana dashboard: "Fleet overview" (host count, aggregate CPU/RAM, top heavy hosts)
+- [ ] Grafana dashboard: "Host detail" (CPU/RAM/disk/net + journal logs)
+
+---
+
+## M3 — MCP layer ⏭
+
+**Spec:** [SPEC-003 — MCP tools](./docs/specs/003-mcp-tools.md)
+
+- [ ] `@modelcontextprotocol/sdk` setup, HTTP server
+- [ ] Tools:
+  - `list_hosts(filters?)` — list with metadata + status
+  - `get_host(host_id)` — detail
+  - `get_metrics(host_id, metric, range, step?)` — query VictoriaMetrics
+  - `search_logs(host_id?, query, range, limit?)` — LogQL via Loki
+  - `get_recent_security_events(host_id?, since?, severity?)` — from Postgres
+- [ ] Bearer token auth flowing through to REST API
+- [ ] Manual test with Claude Desktop: "What's happening on prod-db-01?"
+- [ ] Doc: how to configure Claude Desktop (`claude_desktop_config.json`)
+
+---
+
+## M4 — Anomaly detection + LLM triage ⏭
+
+- [ ] **proto:** `CommandRequest`, `CommandResult`, `DiagnosticCommand`, `CommandTier`, `ExecutionPolicy`
+- [ ] **server:** classical anomaly detector — cron, EWMA + threshold rules
+- [ ] **server:** alert storage (`alerts`, `alert_candidates` tables)
+- [ ] **server:** triage worker — builds context bundle, calls LLM, stores result
+- [ ] **server:** Discord webhook notifier
+- [ ] **agent:** Tier 0 diagnostic checks:
+  - `disk_usage` — gopsutil equivalent of `df -h`
+  - `top_processes` — top 10 by CPU / RAM
+  - `recent_auth_events` — last 50 lines of auth.log
+  - `journalctl_for_unit` — `journalctl -u X --since=...`
+  - `read_config_file` — read with allowlist (`/etc/nginx/*`, `/etc/systemd/*`, …)
+- [ ] **agent:** Tier 1 shell executor — strict allowlist (`ss`, `journalctl`, `cat` on allowlisted paths), validator rejects metacharacters
+- [ ] **server:** `POST /v1/commands`, `GET /v1/commands/:id`
+- [ ] **mcp:** `run_diagnostic(host, check, params)`
+- [ ] **mcp:** `run_shell(host, binary, args, reason)` (Tier 1 only)
+
+---
+
+## M5 — Security collectors ⏭
+
+- [ ] **agent:** auth.log tail/parse — SSH login (success), SSH failed auth
+- [ ] **agent:** sudo event parser
+- [ ] **agent:** listening port watcher — diff vs. baseline
+- [ ] **agent:** `/etc/passwd` integrity check
+- [ ] **agent:** process anomaly — new process running from an unusual path
+- [ ] **server:** rule engine for security alerts (e.g. ">5 failed auth attempts in 1 min from the same IP")
+- [ ] **mcp:** extended `get_security_events`
+
+---
+
+## M6 — Polish + open-source launch ⏭
+
+- [ ] License confirmed and applied to all repos
+- [ ] CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md consistent across all repos
+- [ ] Reproducible builds (Go: `-trimpath`, `-buildvcs=true`)
+- [ ] cosign keyless signing in release CI
+- [ ] SBOM attached to every release (CycloneDX)
+- [ ] `praetor.dev` landing page
+- [ ] Demo video (asciinema + voiceover, max 3 min)
+- [ ] README badges, screenshots
+- [ ] Show HN draft
+- [ ] r/selfhosted draft
+- [ ] **Repos set to public**
+
+---
+
+## Post-v0.1 backlog
+
+- Multi-tenancy (`org_id` throughout)
+- Container introspection (Docker, Podman, Kubernetes)
+- eBPF collectors
+- File integrity monitoring (FIM)
+- Web UI (`praetor-ui` repo)
+- Tier 2/3 commands with human-in-the-loop approval
+- Autonomous agent runtime (LLM agent inside praetor-server that calls MCP tools itself)
+- Helm chart + Docker Compose for the server stack
+- packagecloud.io / Homebrew tap
+
+---
+
+## Principle
+
+**Every milestone ends with a demo or screenshot in the daily note.** Without that, it's just a plan. M0 demo: `gh repo list`. M1 demo: `curl /v1/hosts`. M2 demo: Grafana screenshot. M3 demo: conversation with Claude Desktop. And so on.

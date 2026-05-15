@@ -3,7 +3,7 @@
 > Self-hosted observability + security platform with a native MCP interface
 > for LLM agents.
 
-**Status:** 🚧 Pre-alpha (M0 — scaffolding). Repos are private until v0.1.0.
+**Status:** 🚧 Pre-alpha — not yet usable in production.
 
 ## What is it
 
@@ -66,11 +66,11 @@ See [ROADMAP.md](./ROADMAP.md). Short version:
 - **v0.5** — anomaly detection + LLM triage + safe Tier-1 commands
 - **v1.0** — production hardening, multi-tenancy, container introspection
 
-Realistic timeline: **Q3 2026** for v0.1, **Q1 2027** for v1.0.
+Target: **v0.1 in Q3 2026**.
 
 ## License
 
-🚧 To be decided before public release. See [ADR-006](./docs/adr/006-license.md).
+Licensed under the [Apache License 2.0](./LICENSE).
 
 ## Author
 
